@@ -1,6 +1,7 @@
 import Foundation
 import Synchronization
 import TurboFieldfare
+import TurboFieldfareMCP
 import TurboFieldfareRepackCore
 import Observation
 
@@ -129,7 +130,9 @@ public final class AppModel {
     /// looking at their own attachments while the model worked.
     public private(set) var runIdentity: Int = 0
 
-    let client: any AppInferenceClient
+    /// Internal and mutable: the history extension reaches the client from
+    /// another file, and enabling MCP swaps it for the tool-capable wrapper.
+    var client: any AppInferenceClient
     private let installer: any AppModelInstallerClient
     private let visionInstaller: any AppVisionPackInstallerClient
     /// The message currently on its way through the send pipeline, from the
@@ -163,6 +166,18 @@ public final class AppModel {
     private var turnCompletion:
         (generation: Int, continuation: CheckedContinuation<Void, Never>)?
     private let memorySampler: AppMemorySampler
+    public var mcpEnabled: Bool {
+        didSet {
+            persistSettings()
+        }
+    }
+    public var mcpConfigPath: String {
+        didSet {
+            persistSettings()
+        }
+    }
+    private var mcpLoadTask: Task<Void, Never>?
+    public private(set) var mcpStatus: String = ""
     let settingsPersistenceEnabled: Bool
     private let installETAClock: SuspendingClock
     private let installETAOrigin: SuspendingClock.Instant
@@ -223,7 +238,8 @@ public final class AppModel {
                 },
                 conversationStoreProvider: @escaping @Sendable (URL) -> ConversationStore = {
                     ConversationStore(rootURL: $0)
-                }) {
+                },
+                mcpConfigPath: String? = nil) {
         let directory = (modelDirectory ?? AppModelLocation.defaultURL()).standardizedFileURL
         let installETAClock = SuspendingClock()
         let settings = settingsPersistenceEnabled
@@ -266,6 +282,8 @@ public final class AppModel {
         self.conversationStoreProvider = conversationStoreProvider
         self.installETAClock = installETAClock
         self.installETAOrigin = installETAClock.now
+        self.mcpEnabled = settings.mcpEnabled
+        self.mcpConfigPath = mcpConfigPath ?? settings.mcpConfigPath ?? ""
         // History follows the same switch as settings: a model driven by tests
         // must not write to the user's Application Support directory.
         if settingsPersistenceEnabled {
@@ -295,6 +313,34 @@ public final class AppModel {
         refreshInstallReadiness()
         refreshVisionInstallReadiness()
         activateConversationStore()
+        if self.mcpEnabled, !self.mcpConfigPath.isEmpty {
+            let path = self.mcpConfigPath
+            self.mcpLoadTask = Task.detached { [weak self] in
+                await self?.loadMCP(configPath: path)
+            }
+        } else {
+            self.mcpStatus = self.mcpEnabled
+                ? "MCP disabled: no config path"
+                : "MCP disabled"
+        }
+    }
+
+    private func loadMCP(configPath: String) async {
+        do {
+            let baseClient = self.client
+            let mcpClient = try await MCPAppInferenceClient(
+                inner: baseClient,
+                configPath: configPath)
+            let toolCount = await mcpClient.toolCount()
+            await MainActor.run {
+                self.client = mcpClient
+                self.mcpStatus = "MCP ready: \(toolCount) tool(s)"
+            }
+        } catch {
+            await MainActor.run {
+                self.mcpStatus = "MCP error: \(error)"
+            }
+        }
     }
 
     public var isRunning: Bool { runState == .running }
@@ -1952,6 +1998,8 @@ public final class AppModel {
         isInspectorVisible = settings.inspectorVisible
         loadModelOnLaunch = settings.loadModelOnLaunch
         pendingRestoredConversationID = settings.selectedConversationID
+        mcpEnabled = settings.mcpEnabled
+        mcpConfigPath = settings.mcpConfigPath ?? ""
     }
 
     func persistSettings() {
@@ -1972,7 +2020,9 @@ public final class AppModel {
             visionResidencyPolicy: runtimeOptions.visionResidencyPolicy,
             rdadvisePolicy: runtimeOptions.rdadvisePolicy,
             loadModelOnLaunch: loadModelOnLaunch,
-            selectedConversationID: history.selection)
+            selectedConversationID: history.selection,
+            mcpEnabled: mcpEnabled,
+            mcpConfigPath: mcpConfigPath.isEmpty ? nil : mcpConfigPath)
         let modelDirectory = URL(fileURLWithPath: modelPathText, isDirectory: true)
         do {
             try MacAppSettingsFileStore.save(settings, forModelDirectory: modelDirectory)
@@ -2269,6 +2319,20 @@ public final class AppModel {
     public func send() {
         recheckVisionPackAtCurrentLocation()
         guard canRun else { return }
+        // MCP loads lazily on launch; a turn sent before the tool list is
+        // known would reach the runtime without tools. Wait for the load
+        // inside the send task so the composer stays responsive.
+        if let mcpLoadTask {
+            sendTask = Task { [weak self] in
+                guard let self else { return }
+                await mcpLoadTask.value
+                guard canRun else { sendTask = nil; return }
+                let turn = takeComposer()
+                await deliver(turn)
+                sendTask = nil
+            }
+            return
+        }
         let turn = takeComposer()
         sendTask = Task { [weak self] in
             guard let self else { return }
@@ -2624,6 +2688,9 @@ public final class AppModel {
             livePrefillDone = done
             livePrefillTotal = total
             sampleLiveMemory()
+        case .toolCalls:
+            // Tool calls are handled by the MCP decorator before they reach the UI stream.
+            break
         case .token(let token):
             phase = .decode
             liveTokenCount = token.index + 1

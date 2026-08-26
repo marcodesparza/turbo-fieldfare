@@ -43,6 +43,11 @@ let package = Package(
             ]
         ),
         .target(
+            name: "TurboFieldfareMCP",
+            dependencies: ["TurboFieldfare"],
+            path: "Sources/TurboFieldfareMCP"
+        ),
+        .target(
             name: "TurboFieldfareRepackCore",
             dependencies: ["TurboFieldfareFormat"],
             path: "Sources/TurboFieldfareRepack/Core"
@@ -65,7 +70,7 @@ let package = Package(
         ),
         .target(
             name: "TurboFieldfareAppCore",
-            dependencies: ["TurboFieldfare", "TurboFieldfareRepackCore", "TurboFieldfareDecodeProtocol"],
+            dependencies: ["TurboFieldfare", "TurboFieldfareRepackCore", "TurboFieldfareDecodeProtocol", "TurboFieldfareMCP"],
             path: "Sources/TurboFieldfareApp/Core",
             resources: [
                 .copy("Resources/app-prompts.json"),

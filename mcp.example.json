@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "searxng": {
+      "command": "./Scripts/mcp-searxng-wrapper.sh",
+      "args": []
+    }
+  }
+}

@@ -20,6 +20,7 @@ struct InspectorView: View {
             generationSection
             runtimeSection
             RunnerDiagnosticsSection(diagnostics: model.diagnostics)
+            mcpSection
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
@@ -400,6 +401,45 @@ struct InspectorView: View {
         }
         .disabled(model.isRunning || model.loadState.isLoading
             || model.isVisionFilesystemMutationInProgress)
+    }
+
+    private var mcpSection: some View {
+        Section("MCP") {
+            Toggle("Enable MCP", isOn: $model.mcpEnabled)
+                .toggleStyle(.switch)
+            LabeledContent("Config") {
+                HStack(spacing: 6) {
+                    TextField("mcp.json path", text: $model.mcpConfigPath)
+                        .font(.caption)
+                    Button("Choose…") {
+                        let panel = NSOpenPanel()
+                        panel.allowsMultipleSelection = false
+                        panel.canChooseDirectories = false
+                        panel.canChooseFiles = true
+                        panel.allowedContentTypes = [.json]
+                        if !model.mcpConfigPath.isEmpty {
+                            panel.directoryURL = URL(fileURLWithPath: model.mcpConfigPath)
+                                .deletingLastPathComponent()
+                        }
+                        if panel.runModal() == .OK, let url = panel.url {
+                            model.mcpConfigPath = url.path
+                        }
+                    }
+                    .fixedSize()
+                }
+            }
+            if !model.mcpStatus.isEmpty {
+                LabeledContent("Status") {
+                    Text(model.mcpStatus)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Text("MCP servers are child processes with network access. Only configure servers you trust. Changes take effect after restarting the app.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .disabled(model.isRunning)
     }
 
 }

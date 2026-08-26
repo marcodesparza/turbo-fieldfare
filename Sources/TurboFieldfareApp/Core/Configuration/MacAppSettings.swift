@@ -27,6 +27,8 @@ struct MacAppSettings: Codable, Equatable, Sendable {
     var rdadvisePolicy: AppRDAdvicePolicy = .off
     var loadModelOnLaunch: Bool = false
     var selectedConversationID: UUID?
+    var mcpEnabled: Bool = false
+    var mcpConfigPath: String? = nil
 
     private enum CodingKeys: String, CodingKey {
         case version
@@ -46,6 +48,8 @@ struct MacAppSettings: Codable, Equatable, Sendable {
         case rdadvisePolicy
         case loadModelOnLaunch
         case selectedConversationID
+        case mcpEnabled
+        case mcpConfigPath
     }
 
     init(version: Int = currentVersion,
@@ -64,7 +68,9 @@ struct MacAppSettings: Codable, Equatable, Sendable {
          visionResidencyPolicy: VisionResidencyPolicy = .onDemand,
          rdadvisePolicy: AppRDAdvicePolicy = .off,
          loadModelOnLaunch: Bool = false,
-         selectedConversationID: UUID? = nil) {
+         selectedConversationID: UUID? = nil,
+         mcpEnabled: Bool = false,
+         mcpConfigPath: String? = nil) {
         self.version = version
         self.contextTokens = contextTokens
         self.expertCacheSlots = expertCacheSlots
@@ -82,6 +88,8 @@ struct MacAppSettings: Codable, Equatable, Sendable {
         self.rdadvisePolicy = rdadvisePolicy
         self.loadModelOnLaunch = loadModelOnLaunch
         self.selectedConversationID = selectedConversationID
+        self.mcpEnabled = mcpEnabled
+        self.mcpConfigPath = mcpConfigPath
     }
 
     init(from decoder: Decoder) throws {
@@ -122,6 +130,12 @@ struct MacAppSettings: Codable, Equatable, Sendable {
         selectedConversationID = try container.decodeIfPresent(
             UUID.self,
             forKey: .selectedConversationID)
+        mcpEnabled = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .mcpEnabled) ?? false
+        mcpConfigPath = try container.decodeIfPresent(
+            String.self,
+            forKey: .mcpConfigPath)
     }
 
     func isValid() -> Bool {

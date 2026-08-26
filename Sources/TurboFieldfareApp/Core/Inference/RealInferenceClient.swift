@@ -554,10 +554,16 @@ actor RealInferenceSession {
             let promptIds: [Int32]
             let multimodalInput: MultimodalPrefillInput?
             if request.imageAttachments.isEmpty {
-                let renderedPrompt = try tokenizer.applyChatTemplate([
-                    GFTokenizer.Message(role: .user, content: request.prompt)
-                ])
-                promptIds = tokenizer.encode(renderedPrompt, addBOS: false)
+                if let tools = request.tools, !tools.isEmpty {
+                    let messages = request.messages
+                        ?? [GFTokenizer.Message(role: .user, content: request.prompt)]
+                    promptIds = try tokenizer.encodeToolChat(messages: messages, tools: tools)
+                } else {
+                    let renderedPrompt = try tokenizer.applyChatTemplate([
+                        GFTokenizer.Message(role: .user, content: request.prompt)
+                    ])
+                    promptIds = tokenizer.encode(renderedPrompt, addBOS: false)
+                }
                 multimodalInput = nil
             } else {
                 guard let visionRuntime, let model else {
@@ -611,7 +617,6 @@ actor RealInferenceSession {
                     maxContext: runner.maxContext))
             runner.reset()
             progress.prefillStart = Date()
-
 
         let result = try await runRawCompletion(
             producer: runner, tokenizer: tokenizer, promptIds: promptIds,
@@ -800,6 +805,16 @@ actor RealInferenceSession {
                                                                  executedMode: executedPrefillMode,
                                                                  kvStorageMode: .fp16)
 
+            let toolMode = request.tools != nil && !request.tools!.isEmpty
+            let decoder: StructuredAssistantDecoder?
+            let toolState = ToolDecodeState()
+            if toolMode {
+                let allowedTools = Set(request.tools!.map { $0.name })
+                decoder = StructuredAssistantDecoder(tokenizer: tokenizer, allowedTools: allowedTools)
+            } else {
+                decoder = nil
+            }
+
             let report: @Sendable (RawDecodeProgress) -> Void = { event in
                 switch event {
                 case .prefill(let done, let total):
@@ -810,19 +825,54 @@ actor RealInferenceSession {
                         progress.countersAtDecodeStart = RunnerCounterSnapshot(runner)
                     }
                     continuation.yield(.prefillProgress(done: done, total: total))
-                case .token(let index, _, let delta):
+                case .token(let index, let id, let delta):
                     if progress.firstTokenDate == nil { progress.firstTokenDate = Date() }
                     progress.generated = index + 1
                     if index % 8 == 0 { _ = memorySampler.sample() }
-                    continuation.yield(.token(AppTokenEvent(
-                        index: index,
-                        textDelta: delta,
-                        elapsedDecodeSeconds: progress.elapsedDecodeSeconds)))
+                    if let decoder = decoder {
+                        do {
+                            let structuredEvents = try decoder.consume(tokenID: id, delta: delta)
+                            for event in structuredEvents {
+                                switch event {
+                                case .content(let text):
+                                    continuation.yield(.token(AppTokenEvent(
+                                        index: index,
+                                        textDelta: text,
+                                        elapsedDecodeSeconds: progress.elapsedDecodeSeconds)))
+                                case .toolCall(let call):
+                                    toolState.accumulatedToolCalls.append(call)
+                                }
+                            }
+                        } catch {
+                            toolState.decodeError = error
+                        }
+                    } else {
+                        continuation.yield(.token(AppTokenEvent(
+                            index: index,
+                            textDelta: delta,
+                            elapsedDecodeSeconds: progress.elapsedDecodeSeconds)))
+                    }
                 case .tail(let text):
-                    continuation.yield(.token(AppTokenEvent(
-                        index: max(progress.generated - 1, 0),
-                        textDelta: text,
-                        elapsedDecodeSeconds: progress.elapsedDecodeSeconds)))
+                    if let decoder = decoder {
+                        do {
+                            let structuredEvents = try decoder.consumeTail(text)
+                            for event in structuredEvents {
+                                if case .content(let text) = event, !text.isEmpty {
+                                    continuation.yield(.token(AppTokenEvent(
+                                        index: max(progress.generated - 1, 0),
+                                        textDelta: text,
+                                        elapsedDecodeSeconds: progress.elapsedDecodeSeconds)))
+                                }
+                            }
+                        } catch {
+                            toolState.decodeError = error
+                        }
+                    } else {
+                        continuation.yield(.token(AppTokenEvent(
+                            index: max(progress.generated - 1, 0),
+                            textDelta: text,
+                            elapsedDecodeSeconds: progress.elapsedDecodeSeconds)))
+                    }
                 }
             }
 
@@ -840,6 +890,19 @@ actor RealInferenceSession {
                     report: report)
             }
             let result = outcome
+            if let error = toolState.decodeError {
+                throw AppInferenceError.unknown("tool call decode failed: \(error)")
+            }
+            if let decoder = decoder {
+                do {
+                    try decoder.finish()
+                } catch {
+                    throw AppInferenceError.unknown("tool call decoder finish failed: \(error)")
+                }
+            }
+            if !toolState.accumulatedToolCalls.isEmpty {
+                continuation.yield(.toolCalls(toolState.accumulatedToolCalls))
+            }
 
             let diagnostics = makeDiagnostics(request: request,
                                               memorySampler: memorySampler,
@@ -992,6 +1055,14 @@ actor RealInferenceSession {
                                                 kvStorageMode: kvStorageMode,
                                                 reason: reason)
     }
+}
+
+/// Tool-call accumulation shared between the progress callback and the
+/// surrounding method. The callback runs synchronously on the session
+/// actor's task, same single-threaded contract as `ProgressState`.
+private final class ToolDecodeState: @unchecked Sendable {
+    var accumulatedToolCalls: [ParsedToolCall] = []
+    var decodeError: Error?
 }
 
 /// Mutable per-generation state shared between the progress callback and the

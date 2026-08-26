@@ -31,6 +31,8 @@ public struct AppGenerationRequest: Equatable, Sendable {
     /// only the service is entitled to make it.
     public var conversationEpoch: UUID?
     public var turnIndex: Int?
+    public var tools: [GFTokenizer.FunctionDefinition]?
+    public var messages: [GFTokenizer.Message]?
 
     public init(modelDirectory: URL,
                 prompt: String,
@@ -45,7 +47,9 @@ public struct AppGenerationRequest: Equatable, Sendable {
                 continuesConversation: Bool = false,
                 conversationTokens: Int = 0,
                 conversationEpoch: UUID? = nil,
-                turnIndex: Int? = nil) {
+                turnIndex: Int? = nil,
+                tools: [GFTokenizer.FunctionDefinition]? = nil,
+                messages: [GFTokenizer.Message]? = nil) {
         self.continuesConversation = continuesConversation
         self.conversationTokens = conversationTokens
         self.conversationEpoch = conversationEpoch
@@ -60,6 +64,8 @@ public struct AppGenerationRequest: Equatable, Sendable {
         self.topP = topP
         self.repetitionPenalty = repetitionPenalty
         self.runtimeOptions = runtimeOptions
+        self.tools = tools
+        self.messages = messages
     }
 
     public var isPureGreedy: Bool {

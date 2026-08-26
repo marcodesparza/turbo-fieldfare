@@ -48,6 +48,10 @@ final class DecodeServiceOutbox: @unchecked Sendable {
             // The writer samples on its own schedule; an inbound reading is the
             // runtime's, and there is nothing to queue.
             break
+        case .toolCalls:
+            // Tool mode only runs in-process (the MCP wrapper drives the loop);
+            // the decode service never sends tools, so no wire event exists.
+            break
         case .prefillProgress(let done, let total):
             state.latestPrefill = PrefillProgress(done: done, total: total)
             condition.signal()

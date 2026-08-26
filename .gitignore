@@ -44,6 +44,22 @@ benchmark-results/
 /scratch
 tmp/
 
+# AI session exports
+kimi-export-session_*.md
+*-export-session_*.md
+*.session.md
+
+# Local environment / secrets
+.env
+.env.local
+*.key
+*.pem
+*.p12
+secrets/
+
+# Personal content (not part of the project)
+docs/personal/
+
 # Python
 __pycache__/
 *.pyc

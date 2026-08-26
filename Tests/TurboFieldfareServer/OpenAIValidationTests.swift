@@ -337,12 +337,12 @@ struct OpenAIValidationTests {
           }
         }
         """#.utf8))
-        let adapted = try GemmaToolSchema.adapted(typeArray, toolName: "lookup")
+        let adapted = try TurboFieldfareServerCore.GemmaToolSchema.adapted(typeArray, toolName: "lookup")
         let name = adapted.objectValue?["properties"]?.objectValue?["name"]?.objectValue
         #expect(name?["type"] == .string("string"))
         #expect(name?["nullable"] == .bool(true))
         #expect(name?["minLength"] == .integer(2))
-        #expect(try GemmaToolSchema.adapted(adapted, toolName: "lookup") == adapted)
+        #expect(try TurboFieldfareServerCore.GemmaToolSchema.adapted(adapted, toolName: "lookup") == adapted)
 
         let anyOf = try JSONDecoder().decode(JSONValue.self, from: Data(#"""
         {
@@ -355,7 +355,7 @@ struct OpenAIValidationTests {
           }
         }
         """#.utf8))
-        let anyOfAdapted = try GemmaToolSchema.adapted(anyOf, toolName: "lookup")
+        let anyOfAdapted = try TurboFieldfareServerCore.GemmaToolSchema.adapted(anyOf, toolName: "lookup")
         let limit = anyOfAdapted.objectValue?["properties"]?.objectValue?["limit"]?.objectValue
         #expect(limit?["type"] == .string("integer"))
         #expect(limit?["nullable"] == .bool(true))
@@ -374,7 +374,7 @@ struct OpenAIValidationTests {
           }
         }
         """#.utf8))
-        let nestedAdapted = try GemmaToolSchema.adapted(nestedOneOf, toolName: "lookup")
+        let nestedAdapted = try TurboFieldfareServerCore.GemmaToolSchema.adapted(nestedOneOf, toolName: "lookup")
         let item = nestedAdapted.objectValue?["properties"]?.objectValue?["names"]?
             .objectValue?["items"]?.objectValue
         #expect(item?["type"] == .string("string"))
@@ -440,9 +440,9 @@ struct OpenAIValidationTests {
         ]
         for encoded in schemas {
             let schema = try JSONDecoder().decode(JSONValue.self, from: Data(encoded.utf8))
-            let adapted = try GemmaToolSchema.adapted(schema, toolName: "probe")
+            let adapted = try TurboFieldfareServerCore.GemmaToolSchema.adapted(schema, toolName: "probe")
             try assertObjectNodesCarryProperties(adapted, path: "parameters")
-            let again = try GemmaToolSchema.adapted(adapted, toolName: "probe")
+            let again = try TurboFieldfareServerCore.GemmaToolSchema.adapted(adapted, toolName: "probe")
             #expect(again == adapted)
         }
     }
@@ -480,7 +480,7 @@ struct OpenAIValidationTests {
         for encoded in schemas {
             let schema = try JSONDecoder().decode(JSONValue.self, from: Data(encoded.utf8))
             do {
-                _ = try GemmaToolSchema.adapted(schema, toolName: "unsafe")
+                _ = try TurboFieldfareServerCore.GemmaToolSchema.adapted(schema, toolName: "unsafe")
                 Issue.record("unsupported schema was accepted: \(encoded)")
             } catch let error as ServerRequestError {
                 #expect(error.envelope.error.code == "invalid_tool_schema")
@@ -498,7 +498,7 @@ struct OpenAIValidationTests {
         for encoded in schemas {
             let schema = try JSONDecoder().decode(JSONValue.self, from: Data(encoded.utf8))
             #expect(throws: ServerRequestError.self) {
-                try GemmaToolSchema.adapted(schema, toolName: "unsafe")
+                try TurboFieldfareServerCore.GemmaToolSchema.adapted(schema, toolName: "unsafe")
             }
         }
     }

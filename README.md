@@ -184,6 +184,50 @@ sidebar. Only one conversation's model context (KV cache) stays in memory.
 Browsing other chats keeps that cache intact; continuing another chat replaces
 it. **New Chat** starts fresh.
 
+
+#### MCP tools (experimental)
+
+The Mac app can drive external tools through the Model Context Protocol (MCP)
+over stdio. When MCP is enabled, the model may decide to call a configured
+tool, wait for the result, and then continue generating an answer. This lets a
+local model access up-to-date information without relying on cloud APIs.
+
+A ready-to-use example uses [SearXNG](https://github.com/searxng/searxng) for
+privacy-friendly web search:
+
+1. Install [Podman](https://podman.io).
+2. Set up a SearXNG directory anywhere on your machine. The checkout needs at
+   least `start.sh`, `mcp-searxng.sh`, `config/settings.yml`, and a `data/`
+   directory. A common location is a sibling of this repository, e.g.
+   `~/searxng`.
+3. Start the SearXNG container:
+   ```bash
+   cd /path/to/searxng
+   ./start.sh
+   ```
+4. Copy the example MCP config and edit it if your SearXNG directory is not a
+   sibling of this repository:
+   ```bash
+   cp mcp.example.json scratch/mcp.json
+   ```
+   If SearXNG lives somewhere else, set `SEARXNG_DIR` in your shell or update
+   `Scripts/mcp-searxng-wrapper.sh` accordingly.
+5. Launch the Mac app from the repository root so relative paths in
+   `mcp.json` resolve correctly:
+   ```bash
+   swift build -c release
+   .build/release/TurboFieldfareMac
+   ```
+6. In the right-hand inspector, enable **MCP**, set **Config** to the path of
+   your `mcp.json`, and restart the app.
+
+When the model emits a tool call, the app executes it through the configured
+MCP server and feeds the result back into the conversation. Only enable MCP
+servers you trust; they run as child processes with the privileges of the app.
+
+Other stdio MCP servers work as long as they speak the MCP 2024-11-05 protocol.
+For example, `uvx mcp-server-fetch` can fetch page contents after a web search.
+
 ### Command-line interface
 
 The CLI uses an existing `.gturbo` installation. If you installed the model
