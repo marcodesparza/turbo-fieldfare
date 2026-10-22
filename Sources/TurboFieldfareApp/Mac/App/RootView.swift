@@ -4,7 +4,7 @@ import SwiftUI
 
 struct RootView: View {
     let model: AppModel
-    @State private var conversationChromeHeight: CGFloat = 0
+    @StoredState private var conversationChromeHeight: CGFloat = 0
 
     var body: some View {
         // Three columns in one HStack, not a NavigationSplitView. The split
@@ -154,7 +154,7 @@ struct RootView: View {
                         .frame(maxHeight: .infinity, alignment: .top)
                 }
 
-                conversationChrome
+                conversationChrome(availableHeight: geometry.size.height)
                     .background {
                         GeometryReader { chromeGeometry in
                             Color.clear.preference(
@@ -174,7 +174,7 @@ struct RootView: View {
         }
     }
 
-    private var conversationChrome: some View {
+    private func conversationChrome(availableHeight: CGFloat) -> some View {
         VStack(spacing: 10) {
             ErrorBanner(model: model)
             ConversationStateNoticeView(model: model)
@@ -184,7 +184,7 @@ struct RootView: View {
                 }
             }
             ModelActionBanner(model: model)
-            PromptComposerView(model: model)
+            PromptComposerView(model: model, availableHeight: availableHeight)
         }
         .padding(.horizontal, 20)
         .padding(.bottom, 16)

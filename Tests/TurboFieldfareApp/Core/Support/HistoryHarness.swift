@@ -117,7 +117,7 @@ final class HistoryHarness {
         attachmentStore = AppImageAttachmentStore(
             directoryURL: root.appendingPathComponent(
                 "staged-\(UUID().uuidString)", isDirectory: true))
-        let model = AppModel(modelDirectory: modelDirectory, client: client,
+        let model = AppModel(modelDirectory: modelDirectory, appDataDirectory: modelDirectory.deletingLastPathComponent(), client: client,
                              attachmentStore: attachmentStore,
                              settingsPersistenceEnabled: true)
         model.modelPathText = modelDirectory.path
@@ -138,12 +138,6 @@ final class HistoryHarness {
             forceLogitsHead: true) { _ in }
         try await waitForWritableStore()
         try await settle("start")
-        if let restored = reference.reading {
-            try await settle("restore selection") {
-                model.screen.conversationID == restored
-                    && model.screen.document != nil
-            }
-        }
     }
 
     private func waitForWritableStore() async throws {

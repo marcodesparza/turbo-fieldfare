@@ -20,6 +20,7 @@ swift run -c release TurboFieldfareRepack --output scratch/gemma4.gturbo
 swift run -c release TurboFieldfareRepack --output scratch/gemma4.gturbo --resume
 swift build -c release
 .build/release/TurboFieldfareMac
+Scripts/build_app.sh
 swift run -c release TurboFieldfareCLI \
   --model scratch/gemma4.gturbo \
   --prompt "The capital of France is" \
@@ -40,11 +41,26 @@ not proxy, tunnel, or expose it. A tool call from the local model never bypasses
 the client's normal permission policy. Keep the execution session alive while
 the server is needed, and stop only a server you launched.
 
+## SwiftUI state and previews
+
+Use `@StoredState` from `TurboFieldfareMacPresentation` for view-owned state.
+It aliases Apple's `SwiftUI.State<Value>` property wrapper, avoiding the State
+macro plugin missing from some CLT installations. Keep reference construction
+explicit; the wrapper evaluates inline initializers eagerly. Use
+`PreviewProvider` for debug previews. Do not introduce direct State attributes
+or Preview macros. Run `ruby Scripts/check_swiftui_macros.rb --self-test` and
+`ruby Scripts/tests/swift_macro_probe_test.rb` when changing these surfaces.
+
 ## Test rules
 
 Before a model run, require macOS 26+, Swift 6.2+, enough disk, acceptable `memory_pressure -Q`, a completed `scratch/gemma4.gturbo`, and no process from `pgrep -fl 'TurboFieldfareServer|TurboFieldfareMac|TurboFieldfareDecodeService|TurboFieldfareCLI|TurboFieldfarePackageTests|swiftpm-testing-helper|mlx_lm|mlx-lm'`. If a check fails, inform the user and stop; do not terminate apps or delete or reinstall the model.
 
 Run package tests through `Scripts/test.sh`. Run only one app, CLI, or model-using test at a time.
+
+For isolated app checks, set `TURBO_FIELDFARE_APP_DATA_PATH` to a temporary
+directory so settings and history stay separate. `TURBO_FIELDFARE_MODEL_PATH`
+overrides the saved model location and disables location changes in the UI.
+See [Build a Mac app](README.md#build-a-mac-app) for bundle instructions.
 
 For performance results, build release once and follow the [community benchmark guide](docs/COMMUNITY_BENCHMARKS.md) exactly. Do not enable experimental controls or profiling.
 

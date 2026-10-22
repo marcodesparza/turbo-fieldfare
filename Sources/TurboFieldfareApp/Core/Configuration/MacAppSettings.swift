@@ -1,11 +1,14 @@
 import Foundation
 import TurboFieldfare
+import TurboFieldfareRepackCore
 
 struct MacAppSettings: Codable, Equatable, Sendable {
     static let fileName = "mac-app-settings.json"
-    static let currentVersion = 2
+    static let currentVersion = 4
 
     var version: Int = currentVersion
+    var selectedModelPath: String?
+    var migratedHistorySources: [String] = []
     var contextTokens: Int = AppContextLengthOption.eightK.tokens
     var expertCacheSlots: Int = 16
     var temperature: Double = 0.2
@@ -16,6 +19,7 @@ struct MacAppSettings: Codable, Equatable, Sendable {
     var prefillEnabled: Bool = true
     var newlineShortcut: AppNewlineShortcut = .return
     var showPromptExamples: Bool = true
+    var textSize: AppTextSize = .standard
     /// Whether the list of chats is showing. Remembered because hiding it is a
     /// choice about how the window looks, and a window that forgot it every
     /// launch would be making that choice again for the user each time.
@@ -32,6 +36,8 @@ struct MacAppSettings: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case version
+        case selectedModelPath
+        case migratedHistorySources
         case contextTokens
         case expertCacheSlots
         case temperature
@@ -42,6 +48,7 @@ struct MacAppSettings: Codable, Equatable, Sendable {
         case prefillEnabled
         case newlineShortcut
         case showPromptExamples
+        case textSize
         case sidebarVisible
         case inspectorVisible
         case visionResidencyPolicy
@@ -53,6 +60,8 @@ struct MacAppSettings: Codable, Equatable, Sendable {
     }
 
     init(version: Int = currentVersion,
+         selectedModelPath: String? = nil,
+         migratedHistorySources: [String] = [],
          contextTokens: Int = AppContextLengthOption.eightK.tokens,
          expertCacheSlots: Int = 16,
          temperature: Double = 0.2,
@@ -63,6 +72,7 @@ struct MacAppSettings: Codable, Equatable, Sendable {
          prefillEnabled: Bool = true,
          newlineShortcut: AppNewlineShortcut = .return,
          showPromptExamples: Bool = true,
+         textSize: AppTextSize = .standard,
          sidebarVisible: Bool = true,
          inspectorVisible: Bool = true,
          visionResidencyPolicy: VisionResidencyPolicy = .onDemand,
@@ -72,6 +82,8 @@ struct MacAppSettings: Codable, Equatable, Sendable {
          mcpEnabled: Bool = false,
          mcpConfigPath: String? = nil) {
         self.version = version
+        self.selectedModelPath = selectedModelPath
+        self.migratedHistorySources = migratedHistorySources
         self.contextTokens = contextTokens
         self.expertCacheSlots = expertCacheSlots
         self.temperature = temperature
@@ -82,6 +94,7 @@ struct MacAppSettings: Codable, Equatable, Sendable {
         self.prefillEnabled = prefillEnabled
         self.newlineShortcut = newlineShortcut
         self.showPromptExamples = showPromptExamples
+        self.textSize = textSize
         self.sidebarVisible = sidebarVisible
         self.inspectorVisible = inspectorVisible
         self.visionResidencyPolicy = visionResidencyPolicy
@@ -95,6 +108,8 @@ struct MacAppSettings: Codable, Equatable, Sendable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         version = try container.decode(Int.self, forKey: .version)
+        selectedModelPath = try container.decodeIfPresent(String.self, forKey: .selectedModelPath)
+        migratedHistorySources = try container.decodeIfPresent([String].self, forKey: .migratedHistorySources) ?? []
         contextTokens = try container.decode(Int.self, forKey: .contextTokens)
         expertCacheSlots = try container.decode(Int.self, forKey: .expertCacheSlots)
         temperature = try container.decode(Double.self, forKey: .temperature)
@@ -109,6 +124,18 @@ struct MacAppSettings: Codable, Equatable, Sendable {
         showPromptExamples = try container.decodeIfPresent(
             Bool.self,
             forKey: .showPromptExamples) ?? true
+        // A damaged appearance preference must not reach settings-wide recovery,
+        // which disables settings writes and requires explicit recovery.
+        // Foundation can throw a non-DecodingError for a fractional integer.
+        if container.contains(.textSize) {
+            do {
+                textSize = try container.decode(AppTextSize.self, forKey: .textSize)
+            } catch {
+                FileHandle.standardError.write(Data(
+                    "Invalid Mac app setting textSize: unsupported value or type; using 100%.\n".utf8))
+                textSize = .standard
+            }
+        }
         // Additive, like every field around it: absent means the default, so
         // no version bump and no rewrite of a file an older build can still
         // read.
@@ -138,8 +165,10 @@ struct MacAppSettings: Codable, Equatable, Sendable {
             forKey: .mcpConfigPath)
     }
 
+    /// Schema routing happens before decoding; value validation never replaces a damaged file.
     func isValid() -> Bool {
-        AppContextLengthOption.allCases.contains { $0.tokens == contextTokens }
+        (selectedModelPath.map { $0.hasPrefix("/") && !$0.contains("\0") } ?? true)
+            && AppContextLengthOption.allCases.contains { $0.tokens == contextTokens }
             && AppRuntimeOptions.allowedSlotCounts.contains(expertCacheSlots)
             && temperature.isFinite && (0...2).contains(temperature)
             && (1...256).contains(topK)
@@ -160,54 +189,62 @@ enum MacAppSettingsFileStore {
             .appendingPathComponent(MacAppSettings.fileName, isDirectory: false)
     }
 
+    static func load(at fileURL: URL) throws -> MacAppSettings? {
+        guard FileManager.default.fileExists(atPath: fileURL.path) else { return nil }
+        let data = try Data(contentsOf: fileURL)
+        let stamp = try JSONDecoder().decode(VersionStamp.self, from: data)
+        guard stamp.version <= MacAppSettings.currentVersion else {
+            throw SettingsError.unsupportedVersion(stamp.version)
+        }
+        var settings = try JSONDecoder().decode(MacAppSettings.self, from: data)
+        guard settings.isValid() else { throw SettingsError.invalidValues }
+        settings.version = MacAppSettings.currentVersion
+        if let path = settings.selectedModelPath {
+            settings.selectedModelPath = URL(fileURLWithPath: path).standardizedFileURL.path
+        }
+        return settings
+    }
+
     static func loadOrCreate(forModelDirectory modelDirectory: URL,
                              fileManager: FileManager = .default) -> MacAppSettings {
-        let fileURL = fileURL(forModelDirectory: modelDirectory)
-        if fileManager.fileExists(atPath: fileURL.path) {
-            do {
-                let data = try Data(contentsOf: fileURL)
-                // The version is read on its own, before the full decode, because
-                // nine keys decode with a hard `decode` and a newer build is
-                // entitled to have moved any of them. Decoding first threw on
-                // exactly the files this branch exists to protect, and the throw
-                // reached the `catch` below, which deletes the file - so an older
-                // build silently replaced a newer one's settings with its own
-                // defaults. A version gate that cannot survive a schema change
-                // gates nothing.
-                let stamp = try JSONDecoder().decode(VersionStamp.self, from: data)
-                // This build does not know what a later version means, so it runs
-                // on defaults and leaves the file exactly as its owner wrote it.
-                guard stamp.version <= MacAppSettings.currentVersion else {
-                    return MacAppSettings()
-                }
-                var settings = try JSONDecoder().decode(MacAppSettings.self, from: data)
-                let needsMigration = settings.version < MacAppSettings.currentVersion
-                if needsMigration {
-                    // Version only: every existing value is still a deliberate
-                    // choice, and rewriting one here would silently discard it.
-                    settings.version = MacAppSettings.currentVersion
-                }
-                guard settings.isValid() else { throw InvalidSettings() }
-                if needsMigration {
-                    try? save(settings, forModelDirectory: modelDirectory,
-                              fileManager: fileManager)
+        do {
+            if let settings = try load(at: fileURL(forModelDirectory: modelDirectory)) {
+                let original = try JSONDecoder().decode(VersionStamp.self, from: Data(contentsOf: fileURL(forModelDirectory: modelDirectory)))
+                if original.version < MacAppSettings.currentVersion {
+                    try save(settings, forModelDirectory: modelDirectory, fileManager: fileManager)
                 }
                 return settings
-            } catch {
-                try? fileManager.removeItem(at: fileURL)
+            }
+            let settings = MacAppSettings()
+            try save(settings, forModelDirectory: modelDirectory, fileManager: fileManager)
+            return settings
+        } catch {
+            FileHandle.standardError.write(Data("Reading Mac app settings failed: \(error)\n".utf8))
+            return MacAppSettings()
+        }
+    }
+
+    enum SettingsError: Error, CustomStringConvertible {
+        case unsupportedVersion(Int)
+        case invalidValues
+        var description: String {
+            switch self {
+            case .unsupportedVersion(let version): "Settings version \(version) requires a newer app. The original file was preserved."
+            case .invalidValues: "Settings contain invalid values. The original file was preserved."
             }
         }
-
-        let settings = MacAppSettings()
-        try? save(settings, forModelDirectory: modelDirectory, fileManager: fileManager)
-        return settings
     }
 
     static func save(_ settings: MacAppSettings,
                      forModelDirectory modelDirectory: URL,
                      fileManager: FileManager = .default) throws {
-        guard settings.isValid() else { throw InvalidSettings() }
-        let fileURL = fileURL(forModelDirectory: modelDirectory)
+        guard settings.isValid() else { throw SettingsError.invalidValues }
+        try save(settings, at: fileURL(forModelDirectory: modelDirectory), fileManager: fileManager)
+    }
+
+    static func save(_ settings: MacAppSettings, at fileURL: URL,
+                     fileManager: FileManager = .default) throws {
+        guard settings.isValid() else { throw SettingsError.invalidValues }
         try fileManager.createDirectory(
             at: fileURL.deletingLastPathComponent(),
             withIntermediateDirectories: true)
@@ -215,7 +252,9 @@ enum MacAppSettingsFileStore {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         var data = try encoder.encode(settings)
         data.append(0x0A)
-        try data.write(to: fileURL, options: .atomic)
+        try Posix.atomicWrite(data, to: fileURL.path,
+                              durableIn: fileURL.deletingLastPathComponent().path,
+                              uniqueTemporary: true)
     }
 
     private struct InvalidSettings: Error {}

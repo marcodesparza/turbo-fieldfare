@@ -59,22 +59,20 @@ extension AppModel {
             historyDiagnostic = nil
         }
 
-        pendingTurnImageWrite?.cancel()
-        pendingTurnImageWrite = nil
-        persistenceTail?.cancel()
-        persistenceTail = nil
         quarantinedPersistenceLineages.removeAll()
         storedConversationID = nil
         serviceEpoch = nil
         pendingServiceRecoveryConversationID = nil
         machine = ConversationScreenMachine()
         history.replaceEntries([])
-        history.selection = pendingRestoredConversationID
+        history.selection = nil
         history.setUnreadableCount(0)
         history.setDiscardedLegacyTrashCount(0)
         history.setReadOnlyStore(false)
         conversationBinding = ConversationStoreBinding(
             modelDirectory: modelDirectory,
+            appDataDirectory: appDataDirectory,
+            store: conversationStore,
             identity: identity,
             generation: conversationBindingGeneration,
             storeProvider: conversationStoreProvider)
@@ -169,15 +167,6 @@ extension AppModel {
                     }.joined(separator: ", "))
         }
         history.replaceEntries(entries)
-        if let saved = pendingRestoredConversationID {
-            pendingRestoredConversationID = nil
-            if history.entry(saved) != nil {
-                openConversation(id: saved)
-            } else {
-                history.selection = nil
-                persistHistorySelection()
-            }
-        }
     }
 
     /// Says so when a conversation's `conversation.json` had to be rebuilt.
@@ -239,7 +228,7 @@ extension AppModel {
                 sampling: currentSampling())
             storedConversationID = meta.id
             history.selection = meta.id
-            persistHistorySelection()
+            persistSettings()
             await refreshHistory()
             return meta.id
         } catch {
@@ -492,7 +481,7 @@ extension AppModel {
                     self.error = .conversationPersistenceFailed("\(error)")
                     storedConversationID = nil
                     history.selection = nil
-                    persistHistorySelection()
+                    persistSettings()
                 }
             }
         }
@@ -548,7 +537,7 @@ extension AppModel {
     /// A conversation that could not continue anyway is never replayed at all;
     /// the row says why instead.
     public func openConversation(id: UUID) {
-        guard !isTurnInFlight, conversationStore != nil else { return }
+        guard !isChangingModelLocation, !isTurnInFlight, conversationStore != nil else { return }
         guard let meta = history.entry(id) else { return }
         if id == storedConversationID,
            serviceEpoch == conversation.epoch,
@@ -855,7 +844,7 @@ extension AppModel {
             switch effect {
             case .select(let id):
                 history.selection = id
-                persistHistorySelection()
+                persistSettings()
             case .dropOutOfContextTurns:
                 conversation.dropOutOfContextPairs()
             case .loadDocument(let id, let renderID):
@@ -889,10 +878,6 @@ extension AppModel {
                                 withdrawingFromTranscript: true)
             }
         }
-    }
-
-    private func persistHistorySelection() {
-        persistSettings()
     }
 
     /// The held chat's turns move out of context and keep their pictures:
@@ -1079,7 +1064,7 @@ extension AppModel {
     }
 
     public func canMutateConversation(id: UUID) -> Bool {
-        conversationStore != nil && history.entry(id) != nil
+        !isChangingModelLocation && conversationStore != nil && history.entry(id) != nil
             && !history.isReadOnlyStore && !isTurnInFlight
             && conversationDeletionTask == nil
     }
